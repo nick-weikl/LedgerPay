@@ -26,4 +26,21 @@ public class LedgerTransactionService {
 
         return ledgerTransactionRepository.save(ledgerTransaction);
     }
+
+    public LedgerTransaction createTransactionIfAbsent(String idempotencyKey) {
+        Optional<LedgerTransaction> transaction = getTransactionByIdempotencyKey(idempotencyKey);
+        return transaction.orElseGet(() -> createTransaction(idempotencyKey));
+    }
+
+    @Transactional
+    public LedgerTransaction createTransactionSafely(String idempotencyKey) {
+        ledgerTransactionRepository.insertIfAbsent(idempotencyKey);
+
+        Optional<LedgerTransaction> result =
+                getTransactionByIdempotencyKey(idempotencyKey);
+
+        return result.orElseThrow(() ->
+                new IllegalStateException("Transaction not found after insert")
+        );
+    }
 }

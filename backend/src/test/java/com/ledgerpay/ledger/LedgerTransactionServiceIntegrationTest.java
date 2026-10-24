@@ -50,4 +50,38 @@ class LedgerTransactionServiceIntegrationTest {
         assertEquals(LedgerTransactionStatus.PENDING, transaction.getStatus());
         assertEquals(key, transaction.getIdempotencyKey());
     }
+
+    @Test
+    void shouldCreateTransactionWhenIdempotencyKeyDoesNotExist() {
+        String key = "missing-" + UUID.randomUUID();
+        LedgerTransaction transaction = ledgerTransactionService.createTransactionIfAbsent(key);
+        assertNotNull(transaction.getId());
+        assertEquals(key, transaction.getIdempotencyKey());
+        assertEquals(LedgerTransactionStatus.PENDING, transaction.getStatus());
+    }
+
+    @Test
+    void shouldReturnExistingTransactionForDuplicateKey() {
+        String key = "payment-" + UUID.randomUUID();
+        LedgerTransaction transaction = ledgerTransactionService.createTransactionIfAbsent(key);
+        LedgerTransaction transaction2 = ledgerTransactionService.createTransactionIfAbsent(key);
+        assertEquals(transaction.getId(), transaction2.getId());
+    }
+
+    @Test
+    void shouldSafelyCreateNewTransaction() {
+        String key = "payment-" + UUID.randomUUID();
+        LedgerTransaction transaction = ledgerTransactionService.createTransactionSafely(key);
+        assertNotNull(transaction.getId());
+        assertEquals(LedgerTransactionStatus.PENDING, transaction.getStatus());
+        assertEquals(key, transaction.getIdempotencyKey());
+    }
+
+    @Test
+    void shouldReturnExistingTransactionSafely() {
+        String key = "payment-" + UUID.randomUUID();
+        LedgerTransaction transaction = ledgerTransactionService.createTransactionSafely(key);
+        LedgerTransaction transaction2 = ledgerTransactionService.createTransactionSafely(key);
+        assertEquals(transaction.getId(), transaction2.getId());
+    }
 }
