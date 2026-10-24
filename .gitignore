@@ -1,7 +1,16 @@
+# macOS
+.DS_Store
+
+# IntelliJ
+.idea/
+*.iml
+
+# Maven build output
+target/
+
+# Environment variables and secrets
 .env
 .env.*
-!.env.example
 
-.idea/
-target/
+# Java
 *.class
