@@ -3,6 +3,7 @@ package com.ledgerpay.ledger;
 import com.ledgerpay.account.Account;
 import com.ledgerpay.account.AccountRepository;
 import com.ledgerpay.account.AccountStatus;
+import com.ledgerpay.exception.IdempotencyConflictException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -88,7 +89,7 @@ public class LedgerPostingService {
             boolean sameCurrency = existingTransaction.getCurrency()
                     .equals(sourceAccount.getCurrency());
             if (!sameSource || !sameDestination || !sameAmount || !sameCurrency) {
-                throw new IllegalStateException(
+                throw new IdempotencyConflictException(
                         "Idempotency key already used for a different transfer"
                 );
             }

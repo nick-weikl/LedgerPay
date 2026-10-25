@@ -3,6 +3,7 @@ package com.ledgerpay.ledger;
 import com.ledgerpay.account.Account;
 import com.ledgerpay.account.AccountRepository;
 import com.ledgerpay.account.AccountStatus;
+import com.ledgerpay.exception.IdempotencyConflictException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -161,7 +162,7 @@ class LedgerPostingServiceIntegrationTest {
             );
 
             assertThrows(
-                    IllegalStateException.class,
+                    IdempotencyConflictException.class,
                     () -> ledgerPostingService.postTransfer(
                             sourceAccount.getId(),
                             destinationAccount.getId(),
