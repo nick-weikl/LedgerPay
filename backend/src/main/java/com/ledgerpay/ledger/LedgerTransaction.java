@@ -45,4 +45,14 @@ public class LedgerTransaction {
     public OffsetDateTime getCreatedAt() {
         return createdAt;
     }
+
+    public void markCompleted() {
+        if (this.status != LedgerTransactionStatus.PENDING) {
+            throw new IllegalStateException(
+                    "Only pending transactions can be completed"
+            );
+        }
+
+        this.status = LedgerTransactionStatus.COMPLETED;
+    }
 }
