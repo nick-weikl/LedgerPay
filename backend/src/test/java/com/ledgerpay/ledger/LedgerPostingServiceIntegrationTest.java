@@ -77,6 +77,11 @@ class LedgerPostingServiceIntegrationTest {
                 0,
                 debitEntry.getAmount().compareTo(creditEntry.getAmount())
         );
+
+        assertEquals(sourceAccount.getId(), transaction.getSourceAccountId());
+        assertEquals(destinationAccount.getId(), transaction.getDestinationAccountId());
+        assertEquals(new BigDecimal("100.00"), transaction.getAmount());
+        assertEquals("USD",  transaction.getCurrency());
     }
 
     @Test
@@ -100,15 +105,14 @@ class LedgerPostingServiceIntegrationTest {
                     idempotencyKey
             );
 
-            assertThrows(
-                    IllegalStateException.class,
-                    () -> ledgerPostingService.postTransfer(
-                            sourceAccount.getId(),
-                            destinationAccount.getId(),
-                            new BigDecimal("100.00"),
-                            idempotencyKey
-                    )
+            LedgerTransaction secondTransaction = ledgerPostingService.postTransfer(
+                    sourceAccount.getId(),
+                    destinationAccount.getId(),
+                    new BigDecimal("100.00"),
+                    idempotencyKey
             );
+
+            assertEquals(transaction.getId(), secondTransaction.getId());
 
             List<LedgerEntry> entries =
                     ledgerEntryRepository.findByTransactionId(transaction.getId());
@@ -121,6 +125,67 @@ class LedgerPostingServiceIntegrationTest {
                             .orElseThrow()
                             .getStatus()
             );
+        } finally {
+            ledgerTransactionRepository.findByIdempotencyKey(idempotencyKey)
+                    .ifPresent(transaction -> {
+                        ledgerEntryRepository.deleteAll(
+                                ledgerEntryRepository.findByTransactionId(transaction.getId())
+                        );
+                        ledgerTransactionRepository.delete(transaction);
+                    });
+
+            accountRepository.deleteById(sourceAccount.getId());
+            accountRepository.deleteById(destinationAccount.getId());
+        }
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void shouldRejectDifferentTransferWithSameIdempotencyKey() {
+        Account sourceAccount = accountRepository.save(
+                new Account("Source Account", "USD", AccountStatus.ACTIVE)
+        );
+
+        Account destinationAccount = accountRepository.save(
+                new Account("Destination Account", "USD", AccountStatus.ACTIVE)
+        );
+
+        String idempotencyKey = "transfer-" + UUID.randomUUID();
+
+        try {
+            LedgerTransaction transaction = ledgerPostingService.postTransfer(
+                    sourceAccount.getId(),
+                    destinationAccount.getId(),
+                    new BigDecimal("100.00"),
+                    idempotencyKey
+            );
+
+            assertThrows(
+                    IllegalStateException.class,
+                    () -> ledgerPostingService.postTransfer(
+                            sourceAccount.getId(),
+                            destinationAccount.getId(),
+                            new BigDecimal("250.00"),
+                            idempotencyKey
+                    )
+            );
+            assertEquals(LedgerTransactionStatus.COMPLETED, transaction.getStatus());
+            LedgerTransaction savedTransaction = ledgerTransactionRepository
+                    .findById(transaction.getId())
+                    .orElseThrow();
+
+            assertEquals(LedgerTransactionStatus.COMPLETED, savedTransaction.getStatus());
+
+            assertEquals(
+                    0,
+                    savedTransaction.getAmount().compareTo(new BigDecimal("100.00"))
+            );
+
+            assertEquals(
+                    2,
+                    ledgerEntryRepository.findByTransactionId(transaction.getId()).size()
+            );
+
         } finally {
             ledgerTransactionRepository.findByIdempotencyKey(idempotencyKey)
                     .ifPresent(transaction -> {

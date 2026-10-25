@@ -2,7 +2,10 @@ package com.ledgerpay.ledger;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
 import java.util.Optional;
+import java.util.UUID;
 
 @Service
 public class LedgerTransactionService {
@@ -33,8 +36,20 @@ public class LedgerTransactionService {
     }
 
     @Transactional
-    public LedgerTransaction createTransactionSafely(String idempotencyKey) {
-        ledgerTransactionRepository.insertIfAbsent(idempotencyKey);
+    public LedgerTransaction createTransactionSafely(
+            String idempotencyKey,
+            UUID sourceAccountId,
+            UUID destinationAccountId,
+            BigDecimal amount,
+            String currency
+    ) {
+        ledgerTransactionRepository.insertIfAbsent(
+                idempotencyKey,
+                sourceAccountId,
+                destinationAccountId,
+                amount,
+                currency
+        );
 
         Optional<LedgerTransaction> result =
                 getTransactionByIdempotencyKey(idempotencyKey);

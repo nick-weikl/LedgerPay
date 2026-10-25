@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -71,17 +72,53 @@ class LedgerTransactionServiceIntegrationTest {
     @Test
     void shouldSafelyCreateNewTransaction() {
         String key = "payment-" + UUID.randomUUID();
-        LedgerTransaction transaction = ledgerTransactionService.createTransactionSafely(key);
+        UUID sourceAccountId = UUID.randomUUID();
+        UUID destinationAccountId = UUID.randomUUID();
+        BigDecimal amount = new BigDecimal("100.00");
+        String currency = "USD";
+        LedgerTransaction transaction = ledgerTransactionService.createTransactionSafely(
+                key,
+                sourceAccountId,
+                destinationAccountId,
+                amount,
+                currency
+        );
         assertNotNull(transaction.getId());
         assertEquals(LedgerTransactionStatus.PENDING, transaction.getStatus());
         assertEquals(key, transaction.getIdempotencyKey());
+        assertEquals(sourceAccountId, transaction.getSourceAccountId());
+        assertEquals(destinationAccountId, transaction.getDestinationAccountId());
+        assertEquals(amount, transaction.getAmount());
+        assertEquals(currency, transaction.getCurrency());
     }
 
     @Test
     void shouldReturnExistingTransactionSafely() {
         String key = "payment-" + UUID.randomUUID();
-        LedgerTransaction transaction = ledgerTransactionService.createTransactionSafely(key);
-        LedgerTransaction transaction2 = ledgerTransactionService.createTransactionSafely(key);
+        UUID sourceAccountId = UUID.randomUUID();
+        UUID destinationAccountId = UUID.randomUUID();
+        BigDecimal amount = new BigDecimal("100.00");
+        String currency = "USD";
+        LedgerTransaction transaction = ledgerTransactionService.createTransactionSafely(
+                key,
+                sourceAccountId,
+                destinationAccountId,
+                amount,
+                currency
+        );
+        LedgerTransaction transaction2 = ledgerTransactionService.createTransactionSafely(
+                key,
+                sourceAccountId,
+                destinationAccountId,
+                amount,
+                currency
+        );
         assertEquals(transaction.getId(), transaction2.getId());
+        assertEquals(LedgerTransactionStatus.PENDING, transaction.getStatus());
+        assertEquals(key, transaction.getIdempotencyKey());
+        assertEquals(sourceAccountId, transaction2.getSourceAccountId());
+        assertEquals(destinationAccountId, transaction2.getDestinationAccountId());
+        assertEquals(amount, transaction.getAmount());
+        assertEquals(currency, transaction.getCurrency());
     }
 }

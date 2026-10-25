@@ -42,6 +42,7 @@ class LedgerPostingConcurrencyIntegrationTest {
         String idempotencyKey = "transfer-" + UUID.randomUUID();
 
         ExecutorService executorService = Executors.newFixedThreadPool(2);
+
         try {
             CountDownLatch countDownLatch = new CountDownLatch(1);
 
@@ -61,33 +62,16 @@ class LedgerPostingConcurrencyIntegrationTest {
 
             countDownLatch.countDown();
 
-            int successCount = 0;
-            int duplicateCount = 0;
+            LedgerTransaction transaction1 = future1.get(10, TimeUnit.SECONDS);
+            LedgerTransaction transaction2 = future2.get(10, TimeUnit.SECONDS);
 
-            for (Future<LedgerTransaction> future : List.of(future1, future2)) {
-                try {
-                    future.get(10, TimeUnit.SECONDS);
-                    successCount++;
-
-                } catch (ExecutionException exception) {
-                    Throwable cause = exception.getCause();
-
-                    if (cause instanceof IllegalStateException
-                            && "A transaction with this idempotency key already exists"
-                            .equals(cause.getMessage())) {
-                        duplicateCount++;
-                    } else {
-                        throw new AssertionError("Unexpected transfer failure", cause);
-                    }
-                }
-            }
-
-            assertEquals(1,  successCount);
-            assertEquals(1,  duplicateCount);
+            assertEquals(transaction1.getId(), transaction2.getId());
 
             LedgerTransaction savedTransaction =
                     ledgerTransactionRepository.findByIdempotencyKey(idempotencyKey)
                             .orElseThrow();
+
+            assertEquals(transaction1.getId(), savedTransaction.getId());
 
             assertEquals(
                     LedgerTransactionStatus.COMPLETED,
@@ -98,6 +82,11 @@ class LedgerPostingConcurrencyIntegrationTest {
                     ledgerEntryRepository.findByTransactionId(savedTransaction.getId());
 
             assertEquals(2, entries.size());
+
+            assertEquals(
+                    0,
+                    savedTransaction.getAmount().compareTo(new BigDecimal("100.00"))
+            );
 
         } finally {
             executorService.shutdown();

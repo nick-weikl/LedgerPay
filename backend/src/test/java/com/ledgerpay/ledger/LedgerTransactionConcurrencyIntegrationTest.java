@@ -3,6 +3,8 @@ package com.ledgerpay.ledger;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+
+import java.math.BigDecimal;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -23,18 +25,34 @@ class LedgerTransactionConcurrencyIntegrationTest {
     @Test
     void shouldHandleConcurrentRequestsWithSameIdempotencyKey() throws Exception {
         String idempotencyKey = "payment-" + UUID.randomUUID();
+        UUID sourceAccountId = UUID.randomUUID();
+        UUID destinationAccountId = UUID.randomUUID();
+        BigDecimal amount = new BigDecimal("100.00");
+        String currency = "USD";
         ExecutorService executorService = Executors.newFixedThreadPool(2);
         try {
             CountDownLatch countDownLatch = new CountDownLatch(1);
 
             Future<LedgerTransaction> firstResult = executorService.submit(() -> {
                 countDownLatch.await();
-                return ledgerTransactionService.createTransactionSafely(idempotencyKey);
+                return ledgerTransactionService.createTransactionSafely(
+                        idempotencyKey,
+                        sourceAccountId,
+                        destinationAccountId,
+                        amount,
+                        currency
+                );
             });
 
             Future<LedgerTransaction> secondResult = executorService.submit(() -> {
                 countDownLatch.await();
-                return ledgerTransactionService.createTransactionSafely(idempotencyKey);
+                return ledgerTransactionService.createTransactionSafely(
+                        idempotencyKey,
+                        sourceAccountId,
+                        destinationAccountId,
+                        amount,
+                        currency
+                );
             });
 
             countDownLatch.countDown();

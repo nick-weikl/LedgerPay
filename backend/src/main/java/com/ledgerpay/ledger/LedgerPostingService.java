@@ -15,18 +15,15 @@ public class LedgerPostingService {
     private final LedgerTransactionRepository ledgerTransactionRepository;
     private final LedgerEntryService ledgerEntryService;
     private final AccountRepository accountRepository;
-    private final LedgerEntryRepository ledgerEntryRepository;
 
     public LedgerPostingService(
             LedgerTransactionRepository ledgerTransactionRepository,
             LedgerEntryService ledgerEntryService,
-            AccountRepository accountRepository,
-            LedgerEntryRepository ledgerEntryRepository
+            AccountRepository accountRepository
     ) {
         this.ledgerTransactionRepository = ledgerTransactionRepository;
         this.ledgerEntryService = ledgerEntryService;
         this.accountRepository = accountRepository;
-        this.ledgerEntryRepository = ledgerEntryRepository;
     }
 
     @Transactional
@@ -69,10 +66,38 @@ public class LedgerPostingService {
             throw new IllegalArgumentException("Source and destination account currencies must match");
         }
 
-        int inserted = ledgerTransactionRepository.insertIfAbsent(idempotencyKey);
+        int inserted = ledgerTransactionRepository.insertIfAbsent(
+                idempotencyKey,
+                sourceAccountId,
+                destinationAccountId,
+                amount,
+                sourceAccount.getCurrency()
+        );
 
         if (inserted == 0) {
-            throw new IllegalStateException("A transaction with this idempotency key already exists");
+            LedgerTransaction existingTransaction = ledgerTransactionRepository
+                    .findByIdempotencyKey(idempotencyKey)
+                    .orElseThrow(() ->
+                            new IllegalStateException("Existing transaction not found"));
+            boolean sameSource = existingTransaction.getSourceAccountId()
+                    .equals(sourceAccountId);
+            boolean sameDestination = existingTransaction.getDestinationAccountId()
+                    .equals(destinationAccountId);
+            boolean sameAmount = existingTransaction.getAmount()
+                    .compareTo(amount) == 0;
+            boolean sameCurrency = existingTransaction.getCurrency()
+                    .equals(sourceAccount.getCurrency());
+            if (!sameSource || !sameDestination || !sameAmount || !sameCurrency) {
+                throw new IllegalStateException(
+                        "Idempotency key already used for a different transfer"
+                );
+            }
+            if (existingTransaction.getStatus() == LedgerTransactionStatus.COMPLETED) {
+                return existingTransaction;
+            }
+            throw new IllegalStateException(
+                    "Existing transaction has not completed"
+            );
         }
 
         LedgerTransaction transaction = ledgerTransactionRepository
