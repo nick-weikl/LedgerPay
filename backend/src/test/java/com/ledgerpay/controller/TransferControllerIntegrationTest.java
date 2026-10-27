@@ -14,6 +14,8 @@ import com.ledgerpay.ledger.LedgerTransactionRepository;
 import com.ledgerpay.ledger.LedgerTransactionStatus;
 import com.ledgerpay.ledger.LedgerEntryType;
 import java.math.BigDecimal;
+import com.ledgerpay.ledger.LedgerEntry;
+import com.ledgerpay.ledger.LedgerTransaction;
 
 import java.util.UUID;
 
@@ -116,6 +118,16 @@ class TransferControllerIntegrationTest {
                 new Account("Destination Account", "USD", AccountStatus.ACTIVE)
         );
 
+        Account fundingAccount = accountRepository.save(
+                new Account("Controller Test Funding", "USD", AccountStatus.ACTIVE)
+        );
+
+        LedgerTransaction fundingTransaction = fundAccount(
+                fundingAccount,
+                sourceAccount,
+                new BigDecimal("500.00")
+        );
+
         String idempotencyKey = "conflict-controller-test-" + UUID.randomUUID();
 
         try {
@@ -196,9 +208,21 @@ class TransferControllerIntegrationTest {
                         ledgerTransactionRepository.delete(transaction);
                     });
 
-            // Remove the test accounts
+            ledgerEntryRepository.deleteAll(
+                    ledgerEntryRepository.findByTransactionId(
+                            fundingTransaction.getId()
+                    )
+            );
+            ledgerEntryRepository.flush();
+
+            ledgerTransactionRepository.deleteById(
+                    fundingTransaction.getId()
+            );
+            ledgerTransactionRepository.flush();
+
             accountRepository.deleteById(sourceAccount.getId());
             accountRepository.deleteById(destinationAccount.getId());
+            accountRepository.deleteById(fundingAccount.getId());
         }
     }
 
@@ -211,6 +235,16 @@ class TransferControllerIntegrationTest {
 
         Account destinationAccount = accountRepository.save(
                 new Account("Destination Account", "USD", AccountStatus.ACTIVE)
+        );
+
+        Account fundingAccount = accountRepository.save(
+                new Account("Controller Test Funding", "USD", AccountStatus.ACTIVE)
+        );
+
+        LedgerTransaction fundingTransaction = fundAccount(
+                fundingAccount,
+                sourceAccount,
+                new BigDecimal("500.00")
         );
 
         String idempotencyKey = "success-controller-test-" + UUID.randomUUID();
@@ -294,8 +328,58 @@ class TransferControllerIntegrationTest {
                         ledgerTransactionRepository.delete(transaction);
                     });
 
+            ledgerEntryRepository.deleteAll(
+                    ledgerEntryRepository.findByTransactionId(
+                            fundingTransaction.getId()
+                    )
+            );
+            ledgerEntryRepository.flush();
+
+            ledgerTransactionRepository.deleteById(
+                    fundingTransaction.getId()
+            );
+            ledgerTransactionRepository.flush();
+
             accountRepository.deleteById(sourceAccount.getId());
             accountRepository.deleteById(destinationAccount.getId());
+            accountRepository.deleteById(fundingAccount.getId());
         }
+    }
+
+    private LedgerTransaction fundAccount(
+            Account fundingAccount,
+            Account targetAccount,
+            BigDecimal amount
+    ) {
+        LedgerTransaction transaction = new LedgerTransaction(
+                "test-funding-" + UUID.randomUUID(),
+                LedgerTransactionStatus.PENDING,
+                fundingAccount.getId(),
+                targetAccount.getId(),
+                amount,
+                "USD"
+        );
+
+        transaction = ledgerTransactionRepository.save(transaction);
+
+        ledgerEntryRepository.save(new LedgerEntry(
+                transaction,
+                fundingAccount,
+                LedgerEntryType.DEBIT,
+                amount
+        ));
+
+        ledgerEntryRepository.save(new LedgerEntry(
+                transaction,
+                targetAccount,
+                LedgerEntryType.CREDIT,
+                amount
+        ));
+
+        transaction.markCompleted();
+        ledgerTransactionRepository.saveAndFlush(transaction);
+        ledgerEntryRepository.flush();
+
+        return transaction;
     }
 }

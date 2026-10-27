@@ -1,6 +1,7 @@
 package com.ledgerpay.ledger;
 
 import com.ledgerpay.account.Account;
+import com.ledgerpay.account.AccountBalanceService;
 import com.ledgerpay.account.AccountRepository;
 import com.ledgerpay.account.AccountStatus;
 import org.junit.jupiter.api.Test;
@@ -29,6 +30,9 @@ class LedgerPostingConcurrencyIntegrationTest {
     @Autowired
     private LedgerEntryRepository ledgerEntryRepository;
 
+    @Autowired
+    private AccountBalanceService accountBalanceService;
+
     @Test
     void shouldPreventConcurrentDuplicateTransfers() throws Exception {
         Account sourceAccount = accountRepository.save(
@@ -37,6 +41,16 @@ class LedgerPostingConcurrencyIntegrationTest {
 
         Account destinationAccount = accountRepository.save(
                 new Account("Rollback Destination", "USD", AccountStatus.ACTIVE)
+        );
+
+        Account fundingAccount = accountRepository.save(
+                new Account("Concurrency Test Funding", "USD", AccountStatus.ACTIVE)
+        );
+
+        LedgerTransaction fundingTransaction = fundAccount(
+                fundingAccount,
+                sourceAccount,
+                new BigDecimal("150.00")
         );
 
         String idempotencyKey = "transfer-" + UUID.randomUUID();
@@ -88,11 +102,22 @@ class LedgerPostingConcurrencyIntegrationTest {
                     savedTransaction.getAmount().compareTo(new BigDecimal("100.00"))
             );
 
+            BigDecimal remainingBalance = accountBalanceService
+                    .calculateBalance(sourceAccount.getId())
+                    .balance();
+
+            assertEquals(
+                    0,
+                    new BigDecimal("50.00").compareTo(remainingBalance)
+            );
+
         } finally {
-            executorService.shutdown();
+            executorService.shutdownNow();
 
             if (!executorService.awaitTermination(15, TimeUnit.SECONDS)) {
-                executorService.shutdownNow();
+                throw new IllegalStateException(
+                        "Transfer threads did not terminate; cleanup would be unsafe"
+                );
             }
 
             ledgerTransactionRepository.findByIdempotencyKey(idempotencyKey)
@@ -103,8 +128,58 @@ class LedgerPostingConcurrencyIntegrationTest {
                         ledgerTransactionRepository.delete(transaction);
                     });
 
+            ledgerEntryRepository.deleteAll(
+                    ledgerEntryRepository.findByTransactionId(
+                            fundingTransaction.getId()
+                    )
+            );
+            ledgerEntryRepository.flush();
+
+            ledgerTransactionRepository.deleteById(
+                    fundingTransaction.getId()
+            );
+            ledgerTransactionRepository.flush();
+
             accountRepository.deleteById(sourceAccount.getId());
             accountRepository.deleteById(destinationAccount.getId());
+            accountRepository.deleteById(fundingAccount.getId());
         }
+    }
+
+    private LedgerTransaction fundAccount(
+            Account fundingAccount,
+            Account targetAccount,
+            BigDecimal amount
+    ) {
+        LedgerTransaction transaction = new LedgerTransaction(
+                "test-funding-" + UUID.randomUUID(),
+                LedgerTransactionStatus.PENDING,
+                fundingAccount.getId(),
+                targetAccount.getId(),
+                amount,
+                "USD"
+        );
+
+        transaction = ledgerTransactionRepository.save(transaction);
+
+        ledgerEntryRepository.save(new LedgerEntry(
+                transaction,
+                fundingAccount,
+                LedgerEntryType.DEBIT,
+                amount
+        ));
+
+        ledgerEntryRepository.save(new LedgerEntry(
+                transaction,
+                targetAccount,
+                LedgerEntryType.CREDIT,
+                amount
+        ));
+
+        transaction.markCompleted();
+        ledgerTransactionRepository.saveAndFlush(transaction);
+        ledgerEntryRepository.flush();
+
+        return transaction;
     }
 }

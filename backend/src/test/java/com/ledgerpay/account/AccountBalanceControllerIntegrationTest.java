@@ -9,6 +9,11 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.test.annotation.Rollback;
+import com.ledgerpay.ledger.LedgerEntry;
+import com.ledgerpay.ledger.LedgerEntryRepository;
+import com.ledgerpay.ledger.LedgerEntryType;
+import com.ledgerpay.ledger.LedgerTransactionRepository;
+import com.ledgerpay.ledger.LedgerTransactionStatus;
 
 import java.math.BigDecimal;
 import java.util.UUID;
@@ -29,6 +34,12 @@ public class AccountBalanceControllerIntegrationTest {
 
     @Autowired
     private LedgerPostingService ledgerPostingService;
+
+    @Autowired
+    private LedgerTransactionRepository ledgerTransactionRepository;
+
+    @Autowired
+    private LedgerEntryRepository ledgerEntryRepository;
 
     @Test
     public void getBalance_whenAccountHasNoEntries_returnsZero() throws Exception {
@@ -79,6 +90,16 @@ public class AccountBalanceControllerIntegrationTest {
         UUID accountId2 = savedAccount2.getId();
         UUID accountId3 = savedAccount3.getId();
 
+        Account fundingAccount = accountRepository.save(
+                new Account("Test Funding Account", "USD", AccountStatus.ACTIVE)
+        );
+
+        fundAccount(
+                fundingAccount,
+                savedAccount1,
+                new BigDecimal("500.00")
+        );
+
         ledgerPostingService.postTransfer(
                 accountId1,
                 accountId2,
@@ -127,19 +148,62 @@ public class AccountBalanceControllerIntegrationTest {
         UUID accountId2 = savedAccount2.getId();
         UUID accountId3 = savedAccount3.getId();
 
-        ledgerPostingService.postTransfer(
+        LedgerTransaction incomingTransaction = new LedgerTransaction(
+                "balance-test-incoming-" + UUID.randomUUID(),
+                LedgerTransactionStatus.PENDING,
                 accountId1,
                 accountId2,
                 new BigDecimal("50.00"),
-                "balance-test-incoming-" + UUID.randomUUID()
+                "USD"
         );
 
-        ledgerPostingService.postTransfer(
+        incomingTransaction = ledgerTransactionRepository.save(incomingTransaction);
+
+        ledgerEntryRepository.save(new LedgerEntry(
+                incomingTransaction,
+                savedAccount1,
+                LedgerEntryType.DEBIT,
+                new BigDecimal("50.00")
+        ));
+
+        ledgerEntryRepository.save(new LedgerEntry(
+                incomingTransaction,
+                savedAccount2,
+                LedgerEntryType.CREDIT,
+                new BigDecimal("50.00")
+        ));
+
+        incomingTransaction.markCompleted();
+        ledgerTransactionRepository.save(incomingTransaction);
+
+        LedgerTransaction outgoingTransaction = new LedgerTransaction(
+                "balance-test-outgoing-" + UUID.randomUUID(),
+                LedgerTransactionStatus.PENDING,
                 accountId2,
                 accountId3,
                 new BigDecimal("200.00"),
-                "balance-test-outgoing-" + UUID.randomUUID()
+                "USD"
         );
+
+        outgoingTransaction = ledgerTransactionRepository.save(outgoingTransaction);
+
+        ledgerEntryRepository.save(new LedgerEntry(
+                outgoingTransaction,
+                savedAccount2,
+                LedgerEntryType.DEBIT,
+                new BigDecimal("200.00")
+        ));
+
+        ledgerEntryRepository.save(new LedgerEntry(
+                outgoingTransaction,
+                savedAccount3,
+                LedgerEntryType.CREDIT,
+                new BigDecimal("200.00")
+        ));
+
+        outgoingTransaction.markCompleted();
+        ledgerTransactionRepository.saveAndFlush(outgoingTransaction);
+        ledgerEntryRepository.flush();
 
         mockMvc.perform(get("/api/accounts/{accountId}/balance", accountId2))
                 .andExpect(status().isOk())
@@ -154,5 +218,36 @@ public class AccountBalanceControllerIntegrationTest {
 
         mockMvc.perform(get("/api/accounts/{accountId}/balance", accountId)).
                 andExpect(status().isNotFound());
+    }
+
+    private void fundAccount(Account fundingAccount, Account targetAccount, BigDecimal amount) {
+        LedgerTransaction transaction = new LedgerTransaction(
+                "test-funding-" + UUID.randomUUID(),
+                LedgerTransactionStatus.PENDING,
+                fundingAccount.getId(),
+                targetAccount.getId(),
+                amount,
+                "USD"
+        );
+
+        transaction = ledgerTransactionRepository.save(transaction);
+
+        ledgerEntryRepository.save(new LedgerEntry(
+                transaction,
+                fundingAccount,
+                LedgerEntryType.DEBIT,
+                amount
+        ));
+
+        ledgerEntryRepository.save(new LedgerEntry(
+                transaction,
+                targetAccount,
+                LedgerEntryType.CREDIT,
+                amount
+        ));
+
+        transaction.markCompleted();
+        ledgerTransactionRepository.saveAndFlush(transaction);
+        ledgerEntryRepository.flush();
     }
 }

@@ -1,6 +1,7 @@
 package com.ledgerpay.ledger;
 
 import com.ledgerpay.account.Account;
+import com.ledgerpay.account.AccountBalanceService;
 import com.ledgerpay.account.AccountRepository;
 import com.ledgerpay.account.AccountStatus;
 import com.ledgerpay.exception.AccountNotFoundException;
@@ -17,15 +18,17 @@ public class LedgerPostingService {
     private final LedgerTransactionRepository ledgerTransactionRepository;
     private final LedgerEntryService ledgerEntryService;
     private final AccountRepository accountRepository;
+    private final AccountBalanceService accountBalanceService;
 
     public LedgerPostingService(
             LedgerTransactionRepository ledgerTransactionRepository,
             LedgerEntryService ledgerEntryService,
-            AccountRepository accountRepository
-    ) {
+            AccountRepository accountRepository,
+            AccountBalanceService accountBalanceService) {
         this.ledgerTransactionRepository = ledgerTransactionRepository;
         this.ledgerEntryService = ledgerEntryService;
         this.accountRepository = accountRepository;
+        this.accountBalanceService = accountBalanceService;
     }
 
     @Transactional
@@ -51,11 +54,38 @@ public class LedgerPostingService {
             throw new IllegalArgumentException("Idempotency key cannot exceed 100 characters");
         }
 
-        Account sourceAccount = accountRepository.findById(sourceAccountId)
-                .orElseThrow(() -> new AccountNotFoundException("Source account not found"));
+        UUID firstAccountId;
+        UUID secondAccountId;
 
-        Account destinationAccount = accountRepository.findById(destinationAccountId)
-                .orElseThrow(() -> new AccountNotFoundException("Destination account not found"));
+        if (sourceAccountId.compareTo(destinationAccountId) < 0) {
+            firstAccountId = sourceAccountId;
+            secondAccountId = destinationAccountId;
+        } else {
+            firstAccountId = destinationAccountId;
+            secondAccountId = sourceAccountId;
+        }
+
+        Account firstAccount = accountRepository.findByIdForUpdate(firstAccountId)
+                .orElseThrow(() -> new AccountNotFoundException(
+                        firstAccountId.equals(sourceAccountId)
+                                ? "Source account not found"
+                                : "Destination account not found"
+                ));
+
+        Account secondAccount = accountRepository.findByIdForUpdate(secondAccountId)
+                .orElseThrow(() -> new AccountNotFoundException(
+                        secondAccountId.equals(sourceAccountId)
+                                ? "Source account not found"
+                                : "Destination account not found"
+                ));
+
+        Account sourceAccount = sourceAccountId.equals(firstAccountId)
+                ? firstAccount
+                : secondAccount;
+
+        Account destinationAccount = destinationAccountId.equals(firstAccountId)
+                ? firstAccount
+                : secondAccount;
 
         if (sourceAccount.getStatus() != AccountStatus.ACTIVE) {
             throw new IllegalArgumentException("Source account is not active");
@@ -100,6 +130,14 @@ public class LedgerPostingService {
             throw new IllegalStateException(
                     "Existing transaction has not completed"
             );
+        }
+
+        BigDecimal availableBalance = accountBalanceService
+                .calculateBalance(sourceAccountId)
+                .balance();
+
+        if (availableBalance.compareTo(amount) < 0) {
+            throw new IllegalArgumentException("Insufficient funds");
         }
 
         LedgerTransaction transaction = ledgerTransactionRepository

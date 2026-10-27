@@ -1,8 +1,10 @@
 package com.ledgerpay.ledger;
 
 import com.ledgerpay.account.Account;
+import com.ledgerpay.account.AccountBalanceService;
 import com.ledgerpay.account.AccountRepository;
 import com.ledgerpay.account.AccountStatus;
+import com.ledgerpay.dto.AccountBalanceResponse;
 import com.ledgerpay.exception.AccountNotFoundException;
 import com.ledgerpay.exception.IdempotencyConflictException;
 import org.junit.jupiter.api.Test;
@@ -16,6 +18,9 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import org.springframework.transaction.annotation.Propagation;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.time.Duration;
 
 @SpringBootTest
 @Transactional
@@ -33,6 +38,49 @@ class LedgerPostingServiceIntegrationTest {
     @Autowired
     private LedgerEntryRepository ledgerEntryRepository;
 
+    @Autowired
+    private AccountBalanceService accountBalanceService;
+
+    private LedgerTransaction fundAccount(
+            Account fundingAccount,
+            Account targetAccount,
+            BigDecimal amount
+    ) {
+        LedgerTransaction fundingTransaction = new LedgerTransaction(
+                "test-funding-" + UUID.randomUUID(),
+                LedgerTransactionStatus.PENDING,
+                fundingAccount.getId(),
+                targetAccount.getId(),
+                amount,
+                "USD"
+        );
+
+        fundingTransaction = ledgerTransactionRepository.save(fundingTransaction);
+
+        LedgerEntry debitEntry = new LedgerEntry(
+                fundingTransaction,
+                fundingAccount,
+                LedgerEntryType.DEBIT,
+                amount
+        );
+
+        LedgerEntry creditEntry = new LedgerEntry(
+                fundingTransaction,
+                targetAccount,
+                LedgerEntryType.CREDIT,
+                amount
+        );
+
+        ledgerEntryRepository.save(debitEntry);
+        ledgerEntryRepository.save(creditEntry);
+
+        fundingTransaction.markCompleted();
+        ledgerTransactionRepository.saveAndFlush(fundingTransaction);
+        ledgerEntryRepository.flush();
+
+        return fundingTransaction;
+    }
+
     @Test
     void shouldPostBalancedTransfer() {
         Account sourceAccount = accountRepository.save(
@@ -41,6 +89,16 @@ class LedgerPostingServiceIntegrationTest {
 
         Account destinationAccount = accountRepository.save(
                 new Account("Destination Account", "USD", AccountStatus.ACTIVE)
+        );
+
+        Account fundingAccount = accountRepository.save(
+                new Account("Test Funding Account", "USD", AccountStatus.ACTIVE)
+        );
+
+        fundAccount(
+                fundingAccount,
+                sourceAccount,
+                new BigDecimal("500.00")
         );
 
         LedgerTransaction transaction = ledgerPostingService.postTransfer(
@@ -97,6 +155,16 @@ class LedgerPostingServiceIntegrationTest {
                 new Account("Destination Account", "USD", AccountStatus.ACTIVE)
         );
 
+        Account fundingAccount = accountRepository.save(
+                new Account("Test Funding Account", "USD", AccountStatus.ACTIVE)
+        );
+
+        LedgerTransaction fundingTransaction = fundAccount(
+                fundingAccount,
+                sourceAccount,
+                new BigDecimal("500.00")
+        );
+
         String idempotencyKey = "transfer-" + UUID.randomUUID();
 
         try {
@@ -136,8 +204,18 @@ class LedgerPostingServiceIntegrationTest {
                         ledgerTransactionRepository.delete(transaction);
                     });
 
+            ledgerEntryRepository.deleteAll(
+                    ledgerEntryRepository.findByTransactionId(fundingTransaction.getId())
+            );
+
+            ledgerTransactionRepository.deleteById(fundingTransaction.getId());
+
+            ledgerEntryRepository.flush();
+            ledgerTransactionRepository.flush();
+
             accountRepository.deleteById(sourceAccount.getId());
             accountRepository.deleteById(destinationAccount.getId());
+            accountRepository.deleteById(fundingAccount.getId());
         }
     }
 
@@ -150,6 +228,16 @@ class LedgerPostingServiceIntegrationTest {
 
         Account destinationAccount = accountRepository.save(
                 new Account("Destination Account", "USD", AccountStatus.ACTIVE)
+        );
+
+        Account fundingAccount = accountRepository.save(
+                new Account("Test Funding Account", "USD", AccountStatus.ACTIVE)
+        );
+
+        LedgerTransaction fundingTransaction = fundAccount(
+                fundingAccount,
+                sourceAccount,
+                new BigDecimal("500.00")
         );
 
         String idempotencyKey = "transfer-" + UUID.randomUUID();
@@ -197,8 +285,18 @@ class LedgerPostingServiceIntegrationTest {
                         ledgerTransactionRepository.delete(transaction);
                     });
 
+            ledgerEntryRepository.deleteAll(
+                    ledgerEntryRepository.findByTransactionId(fundingTransaction.getId())
+            );
+
+            ledgerTransactionRepository.deleteById(fundingTransaction.getId());
+
+            ledgerEntryRepository.flush();
+            ledgerTransactionRepository.flush();
+
             accountRepository.deleteById(sourceAccount.getId());
             accountRepository.deleteById(destinationAccount.getId());
+            accountRepository.deleteById(fundingAccount.getId());
         }
     }
 
@@ -252,5 +350,196 @@ class LedgerPostingServiceIntegrationTest {
         assertTrue(
                 ledgerTransactionRepository.findByIdempotencyKey(idempotencyKey).isEmpty()
         );
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void shouldRejectTransferWithInsufficientFunds() {
+        Account sourceAccount = accountRepository.save(
+                new Account("Source Account", "USD", AccountStatus.ACTIVE)
+        );
+
+        Account destinationAccount = accountRepository.save(
+                new Account("Destination Account", "USD", AccountStatus.ACTIVE)
+        );
+
+        String idempotencyKey = "insufficient-funds-test-" + UUID.randomUUID();
+
+        try {
+            IllegalArgumentException exception = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> ledgerPostingService.postTransfer(
+                            sourceAccount.getId(),
+                            destinationAccount.getId(),
+                            new BigDecimal("100.00"),
+                            idempotencyKey
+                    )
+            );
+
+            assertEquals("Insufficient funds", exception.getMessage());
+
+            assertTrue(
+                    ledgerTransactionRepository.findByIdempotencyKey(idempotencyKey).isEmpty()
+            );
+
+        } finally {
+            accountRepository.deleteById(sourceAccount.getId());
+            accountRepository.deleteById(destinationAccount.getId());
+        }
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void shouldPreventConcurrentOverspending() throws Exception {
+
+        Account sourceAccount = accountRepository.save(
+                new Account("Concurrent Source", "USD", AccountStatus.ACTIVE)
+        );
+
+        Account destinationA = accountRepository.save(
+                new Account("Destination A", "USD", AccountStatus.ACTIVE)
+        );
+
+        Account destinationB = accountRepository.save(
+                new Account("Destination B", "USD", AccountStatus.ACTIVE)
+        );
+
+        Account fundingAccount = accountRepository.save(
+                new Account("Concurrent Funding", "USD", AccountStatus.ACTIVE)
+        );
+
+        LedgerTransaction fundingTransaction = fundAccount(
+                fundingAccount,
+                sourceAccount,
+                new BigDecimal("150.00")
+        );
+
+        String transferKeyA = "concurrent-A-" + UUID.randomUUID();
+        String transferKeyB = "concurrent-B-" + UUID.randomUUID();
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch startLatch = new CountDownLatch(1);
+
+        AtomicInteger successfulTransfers = new AtomicInteger();
+        AtomicInteger insufficientFundsFailures = new AtomicInteger();
+
+        try {
+            Callable<Void> transferA = () -> {
+                startLatch.await();
+
+                try {
+                    ledgerPostingService.postTransfer(
+                            sourceAccount.getId(),
+                            destinationA.getId(),
+                            new BigDecimal("100.00"),
+                            transferKeyA
+                    );
+
+                    successfulTransfers.incrementAndGet();
+
+                } catch (IllegalArgumentException e) {
+                    if ("Insufficient funds".equals(e.getMessage())) {
+                        insufficientFundsFailures.incrementAndGet();
+                    } else {
+                        throw e;
+                    }
+                }
+
+                return null;
+            };
+
+            Callable<Void> transferB = () -> {
+                startLatch.await();
+
+                try {
+                    ledgerPostingService.postTransfer(
+                            sourceAccount.getId(),
+                            destinationB.getId(),
+                            new BigDecimal("100.00"),
+                            transferKeyB
+                    );
+
+                    successfulTransfers.incrementAndGet();
+
+                } catch (IllegalArgumentException e) {
+                    if ("Insufficient funds".equals(e.getMessage())) {
+                        insufficientFundsFailures.incrementAndGet();
+                    } else {
+                        throw e;
+                    }
+                }
+
+                return null;
+            };
+
+            Future<Void> futureA = executor.submit(transferA);
+            Future<Void> futureB = executor.submit(transferB);
+
+            startLatch.countDown();
+
+            futureA.get(15, TimeUnit.SECONDS);
+            futureB.get(15, TimeUnit.SECONDS);
+
+            assertEquals(1, successfulTransfers.get());
+            assertEquals(1, insufficientFundsFailures.get());
+
+            AccountBalanceResponse balanceResponse = accountBalanceService.calculateBalance(
+                    sourceAccount.getId()
+            );
+
+            BigDecimal finalBalance = balanceResponse.balance();
+
+            assertEquals(
+                    0,
+                    new BigDecimal("50.00").compareTo(finalBalance)
+            );
+
+        } finally {
+            executor.shutdownNow();
+
+            if (!executor.awaitTermination(15, TimeUnit.SECONDS)) {
+                throw new IllegalStateException(
+                        "Transfer threads did not terminate; cleanup would be unsafe"
+                );
+            }
+
+            for (String key : List.of(transferKeyA, transferKeyB)) {
+                ledgerTransactionRepository.findByIdempotencyKey(key)
+                        .ifPresent(transaction -> {
+                            ledgerEntryRepository.deleteAll(
+                                    ledgerEntryRepository.findByTransactionId(
+                                            transaction.getId()
+                                    )
+                            );
+
+                            ledgerEntryRepository.flush();
+
+                            ledgerTransactionRepository.deleteById(
+                                    transaction.getId()
+                            );
+
+                            ledgerTransactionRepository.flush();
+                        });
+            }
+
+            ledgerEntryRepository.deleteAll(
+                    ledgerEntryRepository.findByTransactionId(
+                            fundingTransaction.getId()
+                    )
+            );
+
+            ledgerEntryRepository.flush();
+
+            ledgerTransactionRepository.deleteById(
+                    fundingTransaction.getId()
+            );
+
+            ledgerTransactionRepository.flush();
+
+            accountRepository.deleteById(sourceAccount.getId());
+            accountRepository.deleteById(destinationA.getId());
+            accountRepository.deleteById(destinationB.getId());
+            accountRepository.deleteById(fundingAccount.getId());
+        }
     }
 }

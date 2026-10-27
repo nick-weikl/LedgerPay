@@ -42,6 +42,16 @@ class LedgerPostingRollbackIntegrationTest {
                 new Account("Rollback Destination", "USD", AccountStatus.ACTIVE)
         );
 
+        Account fundingAccount = accountRepository.save(
+                new Account("Rollback Funding", "USD", AccountStatus.ACTIVE)
+        );
+
+        LedgerTransaction fundingTransaction = fundAccount(
+                fundingAccount,
+                sourceAccount,
+                new BigDecimal("500.00")
+        );
+
         try {
             doAnswer(invocation -> {
                 LedgerEntryType entryType = invocation.getArgument(2);
@@ -79,7 +89,7 @@ class LedgerPostingRollbackIntegrationTest {
             assertEquals("Simulated credit entry failure", exception.getMessage());
 
             assertEquals(
-                    0,
+                    1,
                     ledgerEntryRepository.countByAccountId(sourceAccount.getId())
             );
 
@@ -88,8 +98,66 @@ class LedgerPostingRollbackIntegrationTest {
                     ledgerEntryRepository.countByAccountId(destinationAccount.getId())
             );
         } finally {
+            reset(ledgerEntryService);
+
+            ledgerEntryRepository.deleteAll(
+                    ledgerEntryRepository.findByTransactionId(
+                            fundingTransaction.getId()
+                    )
+            );
+
+            ledgerEntryRepository.flush();
+
+            ledgerTransactionRepository.deleteById(
+                    fundingTransaction.getId()
+            );
+
+            ledgerTransactionRepository.flush();
+
             accountRepository.deleteById(sourceAccount.getId());
             accountRepository.deleteById(destinationAccount.getId());
+            accountRepository.deleteById(fundingAccount.getId());
         }
+    }
+
+    private LedgerTransaction fundAccount(
+            Account fundingAccount,
+            Account targetAccount,
+            BigDecimal amount
+    ) {
+        LedgerTransaction fundingTransaction = new LedgerTransaction(
+                "test-funding-" + UUID.randomUUID(),
+                LedgerTransactionStatus.PENDING,
+                fundingAccount.getId(),
+                targetAccount.getId(),
+                amount,
+                "USD"
+        );
+
+        fundingTransaction = ledgerTransactionRepository.save(fundingTransaction);
+
+        ledgerEntryRepository.save(
+                new LedgerEntry(
+                        fundingTransaction,
+                        fundingAccount,
+                        LedgerEntryType.DEBIT,
+                        amount
+                )
+        );
+
+        ledgerEntryRepository.save(
+                new LedgerEntry(
+                        fundingTransaction,
+                        targetAccount,
+                        LedgerEntryType.CREDIT,
+                        amount
+                )
+        );
+
+        fundingTransaction.markCompleted();
+        ledgerTransactionRepository.saveAndFlush(fundingTransaction);
+        ledgerEntryRepository.flush();
+
+        return fundingTransaction;
     }
 }
