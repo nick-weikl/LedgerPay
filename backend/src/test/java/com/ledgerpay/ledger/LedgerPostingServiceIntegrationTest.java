@@ -7,6 +7,8 @@ import com.ledgerpay.account.AccountStatus;
 import com.ledgerpay.dto.AccountBalanceResponse;
 import com.ledgerpay.exception.AccountNotFoundException;
 import com.ledgerpay.exception.IdempotencyConflictException;
+import com.ledgerpay.testutil.AccountFunding;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -38,48 +40,16 @@ class LedgerPostingServiceIntegrationTest {
     @Autowired
     private LedgerEntryRepository ledgerEntryRepository;
 
+    private AccountFunding accountFunding;
+
+    @BeforeEach
+    void setUpAccountFunding() {
+        accountFunding = new AccountFunding(ledgerTransactionRepository, ledgerEntryRepository);
+    }
+
     @Autowired
     private AccountBalanceService accountBalanceService;
 
-    private LedgerTransaction fundAccount(
-            Account fundingAccount,
-            Account targetAccount,
-            BigDecimal amount
-    ) {
-        LedgerTransaction fundingTransaction = new LedgerTransaction(
-                "test-funding-" + UUID.randomUUID(),
-                LedgerTransactionStatus.PENDING,
-                fundingAccount.getId(),
-                targetAccount.getId(),
-                amount,
-                "USD"
-        );
-
-        fundingTransaction = ledgerTransactionRepository.save(fundingTransaction);
-
-        LedgerEntry debitEntry = new LedgerEntry(
-                fundingTransaction,
-                fundingAccount,
-                LedgerEntryType.DEBIT,
-                amount
-        );
-
-        LedgerEntry creditEntry = new LedgerEntry(
-                fundingTransaction,
-                targetAccount,
-                LedgerEntryType.CREDIT,
-                amount
-        );
-
-        ledgerEntryRepository.save(debitEntry);
-        ledgerEntryRepository.save(creditEntry);
-
-        fundingTransaction.markCompleted();
-        ledgerTransactionRepository.saveAndFlush(fundingTransaction);
-        ledgerEntryRepository.flush();
-
-        return fundingTransaction;
-    }
 
     @Test
     void shouldPostBalancedTransfer() {
@@ -95,7 +65,7 @@ class LedgerPostingServiceIntegrationTest {
                 new Account("Test Funding Account", "USD", AccountStatus.ACTIVE)
         );
 
-        fundAccount(
+        accountFunding.fundAccount(
                 fundingAccount,
                 sourceAccount,
                 new BigDecimal("500.00")
@@ -159,7 +129,7 @@ class LedgerPostingServiceIntegrationTest {
                 new Account("Test Funding Account", "USD", AccountStatus.ACTIVE)
         );
 
-        LedgerTransaction fundingTransaction = fundAccount(
+        LedgerTransaction fundingTransaction = accountFunding.fundAccount(
                 fundingAccount,
                 sourceAccount,
                 new BigDecimal("500.00")
@@ -234,7 +204,7 @@ class LedgerPostingServiceIntegrationTest {
                 new Account("Test Funding Account", "USD", AccountStatus.ACTIVE)
         );
 
-        LedgerTransaction fundingTransaction = fundAccount(
+        LedgerTransaction fundingTransaction = accountFunding.fundAccount(
                 fundingAccount,
                 sourceAccount,
                 new BigDecimal("500.00")
@@ -408,7 +378,7 @@ class LedgerPostingServiceIntegrationTest {
                 new Account("Concurrent Funding", "USD", AccountStatus.ACTIVE)
         );
 
-        LedgerTransaction fundingTransaction = fundAccount(
+        LedgerTransaction fundingTransaction = accountFunding.fundAccount(
                 fundingAccount,
                 sourceAccount,
                 new BigDecimal("150.00")

@@ -1,5 +1,7 @@
 package com.ledgerpay.controller;
 
+import com.ledgerpay.testutil.AccountFunding;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -42,6 +44,13 @@ class TransferControllerIntegrationTest {
 
     @Autowired
     private LedgerEntryRepository ledgerEntryRepository;
+
+    private AccountFunding accountFunding;
+
+    @BeforeEach
+    void setUpAccountFunding() {
+        accountFunding = new AccountFunding(ledgerTransactionRepository, ledgerEntryRepository);
+    }
 
     @Test
     void shouldReturn400WhenTransferAmountIsInvalid() throws Exception {
@@ -122,7 +131,7 @@ class TransferControllerIntegrationTest {
                 new Account("Controller Test Funding", "USD", AccountStatus.ACTIVE)
         );
 
-        LedgerTransaction fundingTransaction = fundAccount(
+        LedgerTransaction fundingTransaction = accountFunding.fundAccount(
                 fundingAccount,
                 sourceAccount,
                 new BigDecimal("500.00")
@@ -241,7 +250,7 @@ class TransferControllerIntegrationTest {
                 new Account("Controller Test Funding", "USD", AccountStatus.ACTIVE)
         );
 
-        LedgerTransaction fundingTransaction = fundAccount(
+        LedgerTransaction fundingTransaction = accountFunding.fundAccount(
                 fundingAccount,
                 sourceAccount,
                 new BigDecimal("500.00")
@@ -346,40 +355,4 @@ class TransferControllerIntegrationTest {
         }
     }
 
-    private LedgerTransaction fundAccount(
-            Account fundingAccount,
-            Account targetAccount,
-            BigDecimal amount
-    ) {
-        LedgerTransaction transaction = new LedgerTransaction(
-                "test-funding-" + UUID.randomUUID(),
-                LedgerTransactionStatus.PENDING,
-                fundingAccount.getId(),
-                targetAccount.getId(),
-                amount,
-                "USD"
-        );
-
-        transaction = ledgerTransactionRepository.save(transaction);
-
-        ledgerEntryRepository.save(new LedgerEntry(
-                transaction,
-                fundingAccount,
-                LedgerEntryType.DEBIT,
-                amount
-        ));
-
-        ledgerEntryRepository.save(new LedgerEntry(
-                transaction,
-                targetAccount,
-                LedgerEntryType.CREDIT,
-                amount
-        ));
-
-        transaction.markCompleted();
-        ledgerTransactionRepository.saveAndFlush(transaction);
-        ledgerEntryRepository.flush();
-
-        return transaction;
-    }
 }

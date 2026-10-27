@@ -2,6 +2,8 @@ package com.ledgerpay.account;
 
 import com.ledgerpay.ledger.LedgerPostingService;
 import com.ledgerpay.ledger.LedgerTransaction;
+import com.ledgerpay.testutil.AccountFunding;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -40,6 +42,13 @@ public class AccountBalanceControllerIntegrationTest {
 
     @Autowired
     private LedgerEntryRepository ledgerEntryRepository;
+
+    private AccountFunding accountFunding;
+
+    @BeforeEach
+    void setUpAccountFunding() {
+        accountFunding = new AccountFunding(ledgerTransactionRepository, ledgerEntryRepository);
+    }
 
     @Test
     public void getBalance_whenAccountHasNoEntries_returnsZero() throws Exception {
@@ -94,7 +103,7 @@ public class AccountBalanceControllerIntegrationTest {
                 new Account("Test Funding Account", "USD", AccountStatus.ACTIVE)
         );
 
-        fundAccount(
+        accountFunding.fundAccount(
                 fundingAccount,
                 savedAccount1,
                 new BigDecimal("500.00")
@@ -220,34 +229,4 @@ public class AccountBalanceControllerIntegrationTest {
                 andExpect(status().isNotFound());
     }
 
-    private void fundAccount(Account fundingAccount, Account targetAccount, BigDecimal amount) {
-        LedgerTransaction transaction = new LedgerTransaction(
-                "test-funding-" + UUID.randomUUID(),
-                LedgerTransactionStatus.PENDING,
-                fundingAccount.getId(),
-                targetAccount.getId(),
-                amount,
-                "USD"
-        );
-
-        transaction = ledgerTransactionRepository.save(transaction);
-
-        ledgerEntryRepository.save(new LedgerEntry(
-                transaction,
-                fundingAccount,
-                LedgerEntryType.DEBIT,
-                amount
-        ));
-
-        ledgerEntryRepository.save(new LedgerEntry(
-                transaction,
-                targetAccount,
-                LedgerEntryType.CREDIT,
-                amount
-        ));
-
-        transaction.markCompleted();
-        ledgerTransactionRepository.saveAndFlush(transaction);
-        ledgerEntryRepository.flush();
-    }
 }

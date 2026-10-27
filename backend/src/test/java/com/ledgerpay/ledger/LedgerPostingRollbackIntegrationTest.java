@@ -3,6 +3,8 @@ package com.ledgerpay.ledger;
 import com.ledgerpay.account.Account;
 import com.ledgerpay.account.AccountRepository;
 import com.ledgerpay.account.AccountStatus;
+import com.ledgerpay.testutil.AccountFunding;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -29,6 +31,13 @@ class LedgerPostingRollbackIntegrationTest {
     @Autowired
     private LedgerEntryRepository ledgerEntryRepository;
 
+    private AccountFunding accountFunding;
+
+    @BeforeEach
+    void setUpAccountFunding() {
+        accountFunding = new AccountFunding(ledgerTransactionRepository, ledgerEntryRepository);
+    }
+
     @MockitoSpyBean
     private LedgerEntryService ledgerEntryService;
 
@@ -46,7 +55,7 @@ class LedgerPostingRollbackIntegrationTest {
                 new Account("Rollback Funding", "USD", AccountStatus.ACTIVE)
         );
 
-        LedgerTransaction fundingTransaction = fundAccount(
+        LedgerTransaction fundingTransaction = accountFunding.fundAccount(
                 fundingAccount,
                 sourceAccount,
                 new BigDecimal("500.00")
@@ -120,44 +129,4 @@ class LedgerPostingRollbackIntegrationTest {
         }
     }
 
-    private LedgerTransaction fundAccount(
-            Account fundingAccount,
-            Account targetAccount,
-            BigDecimal amount
-    ) {
-        LedgerTransaction fundingTransaction = new LedgerTransaction(
-                "test-funding-" + UUID.randomUUID(),
-                LedgerTransactionStatus.PENDING,
-                fundingAccount.getId(),
-                targetAccount.getId(),
-                amount,
-                "USD"
-        );
-
-        fundingTransaction = ledgerTransactionRepository.save(fundingTransaction);
-
-        ledgerEntryRepository.save(
-                new LedgerEntry(
-                        fundingTransaction,
-                        fundingAccount,
-                        LedgerEntryType.DEBIT,
-                        amount
-                )
-        );
-
-        ledgerEntryRepository.save(
-                new LedgerEntry(
-                        fundingTransaction,
-                        targetAccount,
-                        LedgerEntryType.CREDIT,
-                        amount
-                )
-        );
-
-        fundingTransaction.markCompleted();
-        ledgerTransactionRepository.saveAndFlush(fundingTransaction);
-        ledgerEntryRepository.flush();
-
-        return fundingTransaction;
-    }
 }
