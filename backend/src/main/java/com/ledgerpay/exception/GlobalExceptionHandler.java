@@ -38,11 +38,26 @@ public class GlobalExceptionHandler {
         Map<String, Object> body = Map.of(
                 "status", 409,
                 "error", "Conflict",
-                "messages", ex.getMessage()
+                "message", ex.getMessage()
         );
 
         return ResponseEntity
                 .status(HttpStatus.CONFLICT)
+                .body(body);
+    }
+
+    @ExceptionHandler(AccountNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleAccountNotFoundException(
+            AccountNotFoundException ex) {
+
+        Map<String, Object> body = Map.of(
+                "status",  404,
+                "error", "Not found",
+                "message", ex.getMessage()
+        );
+
+        return ResponseEntity
+                .status(HttpStatus.NOT_FOUND)
                 .body(body);
     }
 }

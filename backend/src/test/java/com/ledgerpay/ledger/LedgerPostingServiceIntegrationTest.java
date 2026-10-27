@@ -3,6 +3,7 @@ package com.ledgerpay.ledger;
 import com.ledgerpay.account.Account;
 import com.ledgerpay.account.AccountRepository;
 import com.ledgerpay.account.AccountStatus;
+import com.ledgerpay.exception.AccountNotFoundException;
 import com.ledgerpay.exception.IdempotencyConflictException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -199,5 +200,57 @@ class LedgerPostingServiceIntegrationTest {
             accountRepository.deleteById(sourceAccount.getId());
             accountRepository.deleteById(destinationAccount.getId());
         }
+    }
+
+    @Test
+    void shouldRejectTransferWhenSourceAccountDoesNotExist() {
+        Account destinationAccount = accountRepository.save(
+                new Account("Destination Account", "USD", AccountStatus.ACTIVE)
+        );
+
+        UUID missingSourceId = UUID.randomUUID();
+        String idempotencyKey = "missing-source-test-" + UUID.randomUUID();
+
+        AccountNotFoundException exception = assertThrows(
+                AccountNotFoundException.class,
+                () -> ledgerPostingService.postTransfer(
+                        missingSourceId,
+                        destinationAccount.getId(),
+                        new BigDecimal("100.00"),
+                        idempotencyKey
+                )
+        );
+
+        assertEquals("Source account not found", exception.getMessage());
+
+        assertTrue(
+                ledgerTransactionRepository.findByIdempotencyKey(idempotencyKey).isEmpty()
+        );
+    }
+
+    @Test
+    void shouldRejectTransferWhenDestinationAccountDoesNotExist() {
+        Account sourceAccount = accountRepository.save(
+                new Account("Source Account", "USD", AccountStatus.ACTIVE)
+        );
+
+        UUID missingDestinationId = UUID.randomUUID();
+        String idempotencyKey = "missing-destination-test-" + UUID.randomUUID();
+
+        AccountNotFoundException exception = assertThrows(
+                AccountNotFoundException.class,
+                () -> ledgerPostingService.postTransfer(
+                        sourceAccount.getId(),
+                        missingDestinationId,
+                        new BigDecimal("100.00"),
+                        idempotencyKey
+                )
+        );
+
+        assertEquals("Destination account not found", exception.getMessage());
+
+        assertTrue(
+                ledgerTransactionRepository.findByIdempotencyKey(idempotencyKey).isEmpty()
+        );
     }
 }

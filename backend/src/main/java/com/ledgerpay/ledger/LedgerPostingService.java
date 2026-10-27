@@ -3,6 +3,7 @@ package com.ledgerpay.ledger;
 import com.ledgerpay.account.Account;
 import com.ledgerpay.account.AccountRepository;
 import com.ledgerpay.account.AccountStatus;
+import com.ledgerpay.exception.AccountNotFoundException;
 import com.ledgerpay.exception.IdempotencyConflictException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -51,10 +52,10 @@ public class LedgerPostingService {
         }
 
         Account sourceAccount = accountRepository.findById(sourceAccountId)
-                .orElseThrow(() -> new IllegalArgumentException("Source account not found"));
+                .orElseThrow(() -> new AccountNotFoundException("Source account not found"));
 
         Account destinationAccount = accountRepository.findById(destinationAccountId)
-                .orElseThrow(() -> new IllegalArgumentException("Destination account not found"));
+                .orElseThrow(() -> new AccountNotFoundException("Destination account not found"));
 
         if (sourceAccount.getStatus() != AccountStatus.ACTIVE) {
             throw new IllegalArgumentException("Source account is not active");
